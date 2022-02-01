@@ -6,6 +6,7 @@ import com.squareup.okhttp.*;
 import com.squareup.okhttp.internal.http.HttpMethod;
 import com.squareup.okhttp.logging.HttpLoggingInterceptor;
 import com.squareup.okhttp.logging.HttpLoggingInterceptor.Level;
+import com.google.gson.Gson;
 import okio.BufferedSink;
 import okio.Okio;
 {{#joda}}
@@ -19,6 +20,8 @@ import org.threeten.bp.OffsetDateTime;
 import org.threeten.bp.format.DateTimeFormatter;
 {{/threetenbp}}
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.*;
 import java.io.File;
 import java.io.IOException;
@@ -59,6 +62,8 @@ public class ApiClient {
     private boolean debugging = false;
     private Map<String, String> defaultHeaderMap = new HashMap<String, String>();
     private String tempFolderPath = null;
+    private String apiKey;
+    private String apiSecret;
 
     private Map<String, Authentication> authentications;
 
@@ -322,7 +327,7 @@ public class ApiClient {
      * Helper method to set API key value for the first API key authentication.
      *
      * @param apiKey API key
-     */
+
     public void setApiKey(String apiKey) {
         for (Authentication auth : authentications.values()) {
             if (auth instanceof ApiKeyAuth) {
@@ -332,23 +337,9 @@ public class ApiClient {
         }
         throw new RuntimeException("No API key authentication configured!");
     }
+*/
 
-    /**
-     * Helper method to set API key prefix for the first API key authentication.
-     *
-     * @param apiKeyPrefix API key prefix
-     */
-    public void setApiKeyPrefix(String apiKeyPrefix) {
-        for (Authentication auth : authentications.values()) {
-            if (auth instanceof ApiKeyAuth) {
-                ((ApiKeyAuth) auth).setApiKeyPrefix(apiKeyPrefix);
-                return;
-            }
-        }
-        throw new RuntimeException("No API key authentication configured!");
-    }
-
-    /**
+/**
      * Helper method to set access token for the first OAuth2 authentication.
      *
      * @param accessToken Access token
@@ -765,6 +756,14 @@ public class ApiClient {
             String content;
             if (obj != null) {
                 content = json.serialize(obj);
+                final Gson gson = new Gson();
+                final TreeMap map = new TreeMap(gson.fromJson(content, Map.class));
+                map.put("api_key", this.apiKey);
+                map.put("timestamp", System.currentTimeMillis());
+                final String queryString = genQueryString(map);
+                final Map finalMap = new LinkedHashMap(map);
+                finalMap.put("sign", sha256_HMAC(queryString, this.apiSecret));
+                content = gson.toJson(finalMap);
             } else {
                 content = null;
             }
@@ -989,7 +988,8 @@ public class ApiClient {
     public Request buildRequest(String path, String method, List<Pair> queryParams, List<Pair> collectionQueryParams, Object body, Map<String, String> headerParams, Map<String, Object> formParams, String[] authNames, ProgressRequestBody.ProgressRequestListener progressRequestListener) throws ApiException {
         updateParamsForAuth(authNames, queryParams, headerParams);
 
-        final String url = buildUrl(path, queryParams, collectionQueryParams);
+        final boolean isGetMethod = method.equals("GET");
+        final String url = buildUrl(path, queryParams, collectionQueryParams, isGetMethod);
         final Request.Builder reqBuilder = new Request.Builder().url(url);
         processHeaderParams(headerParams, reqBuilder);
 
@@ -1038,12 +1038,18 @@ public class ApiClient {
      * @param collectionQueryParams The collection query parameters
      * @return The full URL
      */
-    public String buildUrl(String path, List<Pair> queryParams, List<Pair> collectionQueryParams) {
+    public String buildUrl(String path, List<Pair> queryParams, List<Pair> collectionQueryParams, boolean isGetMethod) {
         final StringBuilder url = new StringBuilder();
         url.append(basePath).append(path);
 
         if (queryParams != null && !queryParams.isEmpty()) {
-            // support (constant) query string in `path`, e.g. "/posts?draft=1"
+        if (isGetMethod) {
+          queryParams.add(new Pair("api_key", "" + this.apiKey));
+          queryParams.add(new Pair("timestamp", "" + System.currentTimeMillis()));
+        }
+        Collections.sort(queryParams);
+
+                                        // support (constant) query string in `path`, e.g. "/posts?draft=1"
             String prefix = path.contains("?") ? "&" : "?";
             for (Pair param : queryParams) {
                 if (param.getValue() != null) {
@@ -1076,6 +1082,12 @@ public class ApiClient {
             }
         }
 
+        if (isGetMethod) {
+          String encodeString = url.toString();
+          encodeString = encodeString.substring(encodeString.indexOf('?') + 1);
+          final String signature = sha256_HMAC(encodeString, this.apiSecret);
+          url.append("&sign=").append(signature);
+        }
         return url.toString();
     }
 
@@ -1122,6 +1134,12 @@ public class ApiClient {
         for (Entry<String, Object> param : formParams.entrySet()) {
             formBuilder.add(param.getKey(), parameterToString(param.getValue()));
         }
+        formParams.put("api_key", this.apiKey);
+        formParams.put("timestamp", System.currentTimeMillis());
+
+        final TreeMap<String, Object> sortedMap = new TreeMap<>(formParams);
+        final String queryString = genQueryString(sortedMap);
+        formBuilder.add("sign", sha256_HMAC(queryString, this.apiSecret));
         return formBuilder.build();
     }
 
@@ -1225,5 +1243,53 @@ public class ApiClient {
         } catch (IOException e) {
             throw new AssertionError(e);
         }
+    }
+
+    private static String byteArrayToHexString(byte[] b) {
+      StringBuilder hs = new StringBuilder();
+      String stmp;
+      for (int n = 0; b != null && n < b.length; n++) {
+        stmp = Integer.toHexString(b[n] & 0XFF);
+        if (stmp.length() == 1) {
+          hs.append('0');
+        }
+        hs.append(stmp);
+      }
+      return hs.toString().toLowerCase();
+    }
+
+    public static String sha256_HMAC(String message, String secret) {
+      String hash = "";
+      try {
+        Mac sha256_HMAC = Mac.getInstance("HmacSHA256");
+        SecretKeySpec secret_key = new SecretKeySpec(secret.getBytes(), "HmacSHA256");
+        sha256_HMAC.init(secret_key);
+        byte[] bytes = sha256_HMAC.doFinal(message.getBytes());
+        hash = byteArrayToHexString(bytes);
+      } catch (Exception e) {
+        System.out.println("Error HmacSHA256 ===========" + e.getMessage());
+      }
+      return hash;
+    }
+
+    private String genQueryString(TreeMap <String, Object> params) {
+      Set<String> keySet = params.keySet();
+      Iterator<String> iter = keySet.iterator();
+        StringBuilder sb = new StringBuilder();
+        while (iter.hasNext()) {
+          String key = iter.next();
+          sb.append(key + "=" + params.get(key));
+          sb.append("&");
+        }
+        sb.deleteCharAt(sb.length() - 1);
+        return sb.toString();
+    }
+
+    public void setApiKey(String apiKey) {
+        this.apiKey = apiKey;
+    }
+
+    public void setApiSecret(String apiSecret) {
+        this.apiSecret = apiSecret;
     }
 }

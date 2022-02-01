@@ -3,7 +3,8 @@
 package {{invokerPackage}};
 
 {{>generatedAnnotation}}
-public class Pair {
+
+public class Pair implements Comparable<Pair> {
     private String name = "";
     private String value = "";
 
@@ -38,4 +39,12 @@ public class Pair {
 
         return true;
     }
+
+  @Override
+  public int compareTo(Pair other) {
+    if (other == null || other.getName() == null) {
+      return -1;
+    }
+    return getName().compareTo(other.getName());
+  }
 }

@@ -120,12 +120,13 @@ public class ApiClient {
                 .setUsername(username)
                 .setPassword(password);
     }
-    
+
    public void createDefaultAdapter() {
         Gson gson = new GsonBuilder()
                 .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ")
                 .registerTypeAdapter(DateTime.class, new DateTimeTypeAdapter())
                 .registerTypeAdapter(LocalDate.class, new LocalDateTypeAdapter())
+                .registerTypeAdapter(OffsetDateTime.class, new OffsetDateTimeTypeAdapter())
                 .create();
 
         okClient = new OkHttpClient();
@@ -139,7 +140,7 @@ public class ApiClient {
 
     public <S> S createService(Class<S> serviceClass) {
         return adapterBuilder.build().create(serviceClass);
-        
+
     }
 
     /**
@@ -217,7 +218,7 @@ public class ApiClient {
             }
         }
     }
-    
+
     /**
      * Helper method to configure the oauth accessCode/implicit flow parameters
      * @param clientId Client ID
@@ -239,7 +240,7 @@ public class ApiClient {
             }
         }
     }
-    
+
     /**
      * Configures a listener which is notified when a new access token is received.
      * @param accessTokenListener Access token listener
@@ -286,7 +287,7 @@ public class ApiClient {
     public OkHttpClient getOkClient() {
         return okClient;
     }
-    
+
     public void addAuthsToOkClient(OkHttpClient okClient) {
         for(Interceptor apiAuthorization : apiAuthorizations.values()) {
             okClient.interceptors().add(apiAuthorization);
